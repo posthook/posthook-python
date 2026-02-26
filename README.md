@@ -5,7 +5,7 @@ The official Python client library for the [Posthook](https://posthook.io) API -
 ## Installation
 
 ```bash
-pip install posthook
+pip install posthook-python
 ```
 
 **Requirements:** Python 3.9+. Only dependency is [httpx](https://www.python-httpx.org/).

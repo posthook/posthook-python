@@ -6,7 +6,7 @@ https://github.com/posthook/posthook-python
 
 ## Registry
 
-https://pypi.org/project/posthook/
+https://pypi.org/project/posthook-python/
 
 ## Steps
 
@@ -51,7 +51,7 @@ https://pypi.org/project/posthook/
 
 ## Prerequisites
 
-- PyPI account with access to the `posthook` package
+- PyPI account with access to the `posthook-python` package
 - `build` and `twine` installed: `pip install build twine`
 - PyPI API token configured in `~/.pypirc` or via `TWINE_USERNAME`/`TWINE_PASSWORD`
 
