@@ -144,29 +144,28 @@ All list parameters are optional:
 |-----------|-------------|
 | `status` | Filter by status: `"pending"`, `"retry"`, `"completed"`, `"failed"` |
 | `limit` | Max results per page |
-| `offset` | Number of results to skip |
 | `sort_by` | Sort field (e.g., `"createdAt"`, `"postAt"`) |
 | `sort_order` | `"ASC"` or `"DESC"` |
 | `post_at_before` | Filter hooks scheduled before this time (ISO string) |
-| `post_at_after` | Filter hooks scheduled after this time (ISO string) |
+| `post_at_after` | Cursor: hooks scheduled after this time (ISO string) |
 | `created_at_before` | Filter hooks created before this time (ISO string) |
 | `created_at_after` | Filter hooks created after this time (ISO string) |
 
-### Pagination loop
+### Cursor-based pagination
 
-Manual offset-based pagination:
+Use `post_at_after` as a cursor. After each page, advance it to the last hook's `post_at`:
 
 ```python
 limit = 100
-offset = 0
+cursor = None
 while True:
-    hooks = client.hooks.list(status="failed", limit=limit, offset=offset)
+    hooks = client.hooks.list(status="failed", limit=limit, post_at_after=cursor)
     for hook in hooks:
         print(hook.id, hook.failure_error)
 
     if len(hooks) < limit:
         break  # last page
-    offset += len(hooks)
+    cursor = hooks[-1].post_at.isoformat()
 ```
 
 ### Auto-paginating iterator (`list_all`)
