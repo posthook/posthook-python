@@ -148,6 +148,21 @@ class BulkActionResult:
 
 
 @dataclass(frozen=True)
+class CallbackResult:
+    """Result of an ack or nack callback.
+
+    Both ``ack()`` and ``nack()`` return this for all expected outcomes,
+    including race conditions where the hook already resolved. Check
+    ``applied`` to see if your callback changed the hook's state.
+    """
+
+    applied: bool
+    """Whether the callback changed the hook's state."""
+    status: str
+    """The hook's current status (e.g. ``"completed"``, ``"nacked"``, ``"not_found"``)."""
+
+
+@dataclass
 class Delivery:
     """A parsed and verified webhook delivery."""
 
@@ -160,3 +175,7 @@ class Delivery:
     posted_at: datetime
     created_at: datetime
     updated_at: datetime
+    ack_url: str | None = None
+    """Callback URL for acknowledging async processing. Present when both ack and nack headers exist."""
+    nack_url: str | None = None
+    """Callback URL for negative acknowledgement. Present when both ack and nack headers exist."""

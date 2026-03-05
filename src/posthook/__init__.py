@@ -1,9 +1,11 @@
 """Posthook Python SDK — schedule, manage, and verify webhooks."""
 
+from ._callbacks import ack, async_ack, async_nack, nack
 from ._client import AsyncPosthook, Posthook
 from ._errors import (
     AuthenticationError,
     BadRequestError,
+    CallbackError,
     ForbiddenError,
     InternalServerError,
     NotFoundError,
@@ -25,6 +27,7 @@ from ._models import (
     STRATEGY_EXPONENTIAL,
     STRATEGY_FIXED,
     BulkActionResult,
+    CallbackResult,
     Delivery,
     Hook,
     HookRetryOverride,
@@ -42,7 +45,13 @@ __all__ = [
     "HookRetryOverride",
     "QuotaInfo",
     "BulkActionResult",
+    "CallbackResult",
     "Delivery",
+    # Callbacks
+    "ack",
+    "nack",
+    "async_ack",
+    "async_nack",
     # Resources
     "SignaturesService",
     "create_signatures",
@@ -61,6 +70,7 @@ __all__ = [
     "PosthookError",
     "BadRequestError",
     "AuthenticationError",
+    "CallbackError",
     "ForbiddenError",
     "NotFoundError",
     "PayloadTooLargeError",

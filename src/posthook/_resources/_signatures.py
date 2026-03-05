@@ -128,6 +128,11 @@ class SignaturesService:
                 f"Failed to parse delivery payload: {exc}"
             )
 
+        # Extract async callback URLs (set both or neither).
+        ack_url = _get_header(headers, "Posthook-Ack-URL")
+        nack_url = _get_header(headers, "Posthook-Nack-URL")
+        has_callbacks = bool(ack_url and nack_url)
+
         return Delivery(
             hook_id=hook_id,
             timestamp=timestamp,
@@ -138,6 +143,8 @@ class SignaturesService:
             posted_at=_parse_dt(payload.get("postedAt", "")),
             created_at=_parse_dt(payload.get("createdAt", "")),
             updated_at=_parse_dt(payload.get("updatedAt", "")),
+            ack_url=ack_url if has_callbacks else None,
+            nack_url=nack_url if has_callbacks else None,
         )
 
 

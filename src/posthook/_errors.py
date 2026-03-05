@@ -97,6 +97,19 @@ class SignatureVerificationError(PosthookError):
         super().__init__(message, code="signature_verification_error")
 
 
+class CallbackError(PosthookError):
+    """Raised when an ack/nack callback fails unexpectedly.
+
+    This is thrown for non-recoverable failures such as invalid tokens (401),
+    expired tokens (410), or server errors (5xx). Expected no-ops like 404
+    (hook deleted) and 409 (stale token) are returned as ``CallbackResult``
+    with ``applied=False`` instead.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message, status_code=status_code, code="callback_error")
+
+
 def _create_error(
     status_code: int,
     message: str,

@@ -204,3 +204,32 @@ class TestCreateSignatures:
     def test_importable_from_package(self) -> None:
         assert hasattr(posthook, "create_signatures")
         assert posthook.create_signatures is create_signatures
+
+
+class TestCallbackHeaders:
+    """Test that parse_delivery extracts ack/nack URLs from headers."""
+
+    def test_both_headers_present(self) -> None:
+        svc = SignaturesService("ph_sk_test")
+        body, headers = _make_delivery()
+        headers["Posthook-Ack-URL"] = "https://api.posthook.io/ack/token123"
+        headers["Posthook-Nack-URL"] = "https://api.posthook.io/nack/token123"
+        delivery = svc.parse_delivery(body, headers)
+        assert delivery.ack_url == "https://api.posthook.io/ack/token123"
+        assert delivery.nack_url == "https://api.posthook.io/nack/token123"
+
+    def test_no_headers(self) -> None:
+        svc = SignaturesService("ph_sk_test")
+        body, headers = _make_delivery()
+        delivery = svc.parse_delivery(body, headers)
+        assert delivery.ack_url is None
+        assert delivery.nack_url is None
+
+    def test_only_ack_header(self) -> None:
+        """When only one header is present, both should be None."""
+        svc = SignaturesService("ph_sk_test")
+        body, headers = _make_delivery()
+        headers["Posthook-Ack-URL"] = "https://api.posthook.io/ack/token123"
+        delivery = svc.parse_delivery(body, headers)
+        assert delivery.ack_url is None
+        assert delivery.nack_url is None

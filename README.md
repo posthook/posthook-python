@@ -330,6 +330,74 @@ delivery = client.signatures.parse_delivery(
 )
 ```
 
+## Async Hooks
+
+When [async hooks](https://posthook.io/docs/essentials/async-hooks) are enabled, `parse_delivery()` populates `ack_url` and `nack_url` on the delivery object. Return 202 from your handler and call back when processing completes.
+
+### FastAPI
+
+```python
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi.responses import Response
+import posthook
+
+app = FastAPI()
+client = posthook.Posthook("pk_...", signing_key="ph_sk_...")
+
+async def process_and_ack(delivery):
+    try:
+        await process_video(delivery.data["video_id"])
+        result = await posthook.async_ack(delivery.ack_url)
+        print(f"Applied: {result.applied}")
+    except Exception as e:
+        await posthook.async_nack(delivery.nack_url, {"error": str(e)})
+
+@app.post("/webhooks/process-video")
+async def handle_webhook(request: Request, background_tasks: BackgroundTasks):
+    body = await request.body()
+    try:
+        delivery = client.signatures.parse_delivery(body=body, headers=dict(request.headers))
+    except posthook.SignatureVerificationError:
+        raise HTTPException(status_code=401)
+
+    background_tasks.add_task(process_and_ack, delivery)
+    return Response(status_code=202)
+```
+
+### Callback functions
+
+The SDK provides standalone callback functions -- pass the URL from the delivery object:
+
+```python
+# Sync (Flask, Django, background workers)
+result = posthook.ack(delivery.ack_url)
+result = posthook.nack(delivery.nack_url, {"error": "processing failed"})
+
+# Async (FastAPI, etc.)
+result = await posthook.async_ack(delivery.ack_url)
+result = await posthook.async_nack(delivery.nack_url, {"error": "processing failed"})
+```
+
+Both return a `CallbackResult`:
+
+```python
+result = posthook.ack(delivery.ack_url)
+print(result.applied)  # True if state changed, False if already resolved
+print(result.status)   # "completed", "not_found", "conflict", etc.
+```
+
+`ack()` and `nack()` return normally for `200`, `404`, and `409` responses. They raise `CallbackError` for `401` (invalid token) and `410` (expired).
+
+If processing happens in a separate worker, use the raw callback URLs instead:
+
+```python
+queue.enqueue("transcode", {
+    "video_id": delivery.data["video_id"],
+    "ack_url": delivery.ack_url,
+    "nack_url": delivery.nack_url,
+})
+```
+
 ## Error Handling
 
 All API errors extend `PosthookError` and can be caught with `isinstance` or `except`:
