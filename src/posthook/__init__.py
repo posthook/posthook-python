@@ -14,7 +14,9 @@ from ._errors import (
     PosthookError,
     RateLimitError,
     SignatureVerificationError,
+    WebSocketError,
 )
+from ._listener import ConnectionInfo, Listener, Result, Stream
 from ._models import (
     SORT_BY_CREATED_AT,
     SORT_BY_POST_AT,
@@ -29,9 +31,11 @@ from ._models import (
     BulkActionResult,
     CallbackResult,
     Delivery,
+    ForwardRequest,
     Hook,
     HookRetryOverride,
     QuotaInfo,
+    WebSocketMeta,
 )
 from ._resources._signatures import SignaturesService, create_signatures
 from ._version import VERSION as __version__
@@ -47,6 +51,13 @@ __all__ = [
     "BulkActionResult",
     "CallbackResult",
     "Delivery",
+    "ForwardRequest",
+    "WebSocketMeta",
+    # WebSocket
+    "Result",
+    "Listener",
+    "Stream",
+    "ConnectionInfo",
     # Callbacks
     "ack",
     "nack",
@@ -78,6 +89,7 @@ __all__ = [
     "InternalServerError",
     "PosthookConnectionError",
     "SignatureVerificationError",
+    "WebSocketError",
     # Version
     "__version__",
 ]

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Iterator
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterator
 from urllib.parse import quote
 
 
 from .._errors import NotFoundError
 from .._http import AsyncHttpClient, SyncHttpClient, _parse_quota
-from .._models import BulkActionResult, Hook, HookRetryOverride
+from .._listener import ConnectionInfo, Listener, Result, Stream
+from .._models import BulkActionResult, Delivery, Hook, HookRetryOverride
 
 
 def _build_schedule_body(
@@ -515,3 +516,72 @@ class AsyncHooksService:
             )
         except NotFoundError:
             pass
+
+    async def listen(
+        self,
+        on_hook: Callable[[Delivery], Awaitable[Result]],
+        *,
+        max_concurrency: int = 0,
+        on_connected: Callable[[ConnectionInfo], None] | None = None,
+        on_disconnected: Callable[[Exception | None], None] | None = None,
+        on_reconnecting: Callable[[int], None] | None = None,
+    ) -> Listener:
+        """Open a WebSocket connection and dispatch deliveries to a handler.
+
+        The listener handles reconnection, heartbeat monitoring, and
+        concurrency control automatically.
+
+        Args:
+            on_hook: Async function called for each delivery. Return a
+                :class:`Result` to ack, accept, or nack.
+            max_concurrency: Maximum concurrent handler invocations (default: 0, unlimited).
+                Deliveries that arrive while at capacity are nacked immediately.
+            on_connected: Called when the WebSocket connection is established.
+            on_disconnected: Called when the connection is lost.
+            on_reconnecting: Called before each reconnection attempt.
+
+        Returns:
+            A started :class:`Listener`. Call ``listener.close()`` to stop.
+        """
+        listener = Listener(
+            api_key=self._http._api_key,
+            base_url=self._http._base_url,
+            handler=on_hook,
+            max_concurrency=max_concurrency,
+            on_connected=on_connected,
+            on_disconnected=on_disconnected,
+            on_reconnecting=on_reconnecting,
+        )
+        await listener.start()
+        return listener
+
+    async def stream(
+        self,
+        *,
+        on_connected: Callable[[ConnectionInfo], None] | None = None,
+        on_disconnected: Callable[[Exception | None], None] | None = None,
+        on_reconnecting: Callable[[int], None] | None = None,
+    ) -> Stream:
+        """Open a WebSocket connection and return an async-iterable stream.
+
+        Each iteration yields a :class:`Delivery` that must be explicitly
+        acked, accepted, or nacked via the stream's methods.
+
+        Args:
+            on_connected: Called when the WebSocket connection is established.
+            on_disconnected: Called when the connection is lost.
+            on_reconnecting: Called before each reconnection attempt.
+
+        Returns:
+            A started :class:`Stream`. Use ``async for`` to iterate and
+            call ``stream.close()`` when done.
+        """
+        s = Stream(
+            api_key=self._http._api_key,
+            base_url=self._http._base_url,
+            on_connected=on_connected,
+            on_disconnected=on_disconnected,
+            on_reconnecting=on_reconnecting,
+        )
+        await s.start()
+        return s

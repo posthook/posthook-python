@@ -110,6 +110,13 @@ class CallbackError(PosthookError):
         super().__init__(message, status_code=status_code, code="callback_error")
 
 
+class WebSocketError(PosthookError):
+    """Raised when a WebSocket connection error occurs."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="websocket_error")
+
+
 def _create_error(
     status_code: int,
     message: str,

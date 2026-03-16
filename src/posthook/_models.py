@@ -162,6 +162,38 @@ class CallbackResult:
     """The hook's current status (e.g. ``"completed"``, ``"nacked"``, ``"not_found"``)."""
 
 
+@dataclass(frozen=True)
+class ForwardRequest:
+    """Original HTTP request details forwarded through a WebSocket delivery."""
+
+    body: str
+    signature: str
+    authorization: str | None = None
+    posthook_id: str | None = None
+    posthook_timestamp: str | None = None
+    posthook_signature: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ForwardRequest:
+        return cls(
+            body=data.get("body", ""),
+            signature=data.get("signature", ""),
+            authorization=data.get("authorization"),
+            posthook_id=data.get("posthookId"),
+            posthook_timestamp=data.get("posthookTimestamp"),
+            posthook_signature=data.get("posthookSignature"),
+        )
+
+
+@dataclass(frozen=True)
+class WebSocketMeta:
+    """Metadata for deliveries received via WebSocket."""
+
+    attempt: int
+    max_attempts: int
+    forward_request: ForwardRequest | None = None
+
+
 @dataclass
 class Delivery:
     """A parsed and verified webhook delivery."""
@@ -179,3 +211,5 @@ class Delivery:
     """Callback URL for acknowledging async processing. Present when both ack and nack headers exist."""
     nack_url: str | None = None
     """Callback URL for negative acknowledgement. Present when both ack and nack headers exist."""
+    ws: WebSocketMeta | None = None
+    """WebSocket metadata. Present only for deliveries received via WebSocket."""

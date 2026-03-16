@@ -22,12 +22,25 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Typing :: Typed",
 ]
-dependencies = ["httpx>=0.25.0,<1"]
+keywords = [
+    "posthook",
+    "webhook",
+    "webhooks",
+    "scheduled-webhooks",
+    "api",
+    "sdk",
+    "scheduling",
+]
+dependencies = [
+    "httpx>=0.25.0,<1",
+    "websockets>=12.0,<15",
+]
 
 [project.urls]
 Homepage = "https://posthook.io"
-Documentation = "https://posthook.io/docs"
+Documentation = "https://docs.posthook.io"
 Repository = "https://github.com/posthook/posthook-python"
+Changelog = "https://docs.posthook.io/changelog"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/posthook"]

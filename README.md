@@ -8,7 +8,7 @@ The official Python client library for the [Posthook](https://posthook.io) API -
 pip install posthook-python
 ```
 
-**Requirements:** Python 3.9+. Only dependency is [httpx](https://www.python-httpx.org/).
+**Requirements:** Python 3.9+. Dependencies: [httpx](https://www.python-httpx.org/) and [websockets](https://websockets.readthedocs.io/).
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ hook = client.hooks.schedule(
 
 ### Absolute UTC time (`post_at`)
 
-Schedule at an exact UTC time. Accepts `datetime` objects or ISO 8601 strings:
+Schedule at an exact UTC time. Accepts `datetime` objects or RFC 3339 strings:
 
 ```python
 from datetime import datetime, timedelta, timezone
@@ -82,7 +82,7 @@ hook = client.hooks.schedule(
     data={"userId": "123"},
 )
 
-# Using an ISO string
+# Using an RFC 3339 string
 hook = client.hooks.schedule(
     path="/webhooks/send-reminder",
     post_at="2026-06-15T10:00:00Z",
@@ -186,7 +186,7 @@ async for hook in client.hooks.list_all(status="failed"):
 
 ### Delete a hook
 
-Idempotent -- returns `None` on both success and 404 (already delivered or gone):
+To cancel a pending hook, delete it before delivery. Idempotent -- returns `None` on both 200 (deleted) and 404 (already deleted):
 
 ```python
 client.hooks.delete("hook-uuid")
@@ -330,9 +330,175 @@ delivery = client.signatures.parse_delivery(
 )
 ```
 
+## WebSocket Listener
+
+The WebSocket listener receives hooks in real time without running an HTTP server. Use `AsyncPosthook` and call `hooks.listen()` with an async handler:
+
+```python
+import asyncio
+import posthook
+
+async def main():
+    async with posthook.AsyncPosthook("pk_...") as client:
+        async def on_hook(delivery):
+            print(f"Received: {delivery.hook_id} -> {delivery.path}")
+            print(f"Data: {delivery.data}")
+            return posthook.Result.ack()
+
+        listener = await client.hooks.listen(
+            on_hook,
+            on_connected=lambda info: print(f"Connected: {info.project_name}"),
+        )
+        await listener.wait()  # Blocks until closed
+
+asyncio.run(main())
+```
+
+### Result types
+
+Your handler must return a `Result`:
+
+| Factory | Effect |
+|---------|--------|
+| `Result.ack()` | Processing complete — hook is marked as delivered immediately |
+| `Result.nack(error?)` | Reject — triggers retry according to project settings |
+| `Result.accept(timeout)` | Async — you have `timeout` seconds to call back via HTTP (see below) |
+
+```python
+return posthook.Result.ack()
+return posthook.Result.nack("processing failed")
+return posthook.Result.accept(timeout=120)
+```
+
+### Async processing with `accept`
+
+Use `accept` when your handler needs more time than the 10-second ack window.
+After returning `accept`, POST to the callback URLs on the delivery to report
+the outcome:
+
+```python
+async def on_hook(delivery):
+    # Kick off background work, save the callback URLs
+    await queue.enqueue("process", {
+        "data": delivery.data,
+        "ack_url": delivery.ack_url,
+        "nack_url": delivery.nack_url,
+    })
+    return posthook.Result.accept(timeout=300)  # 5 minutes to call back
+
+# Later, in the background worker:
+await posthook.async_ack(job["ack_url"])
+# or on failure:
+await posthook.async_nack(job["nack_url"], {"error": "failed"})
+```
+
+If neither URL is called before the deadline, the hook is retried.
+
+### Concurrency
+
+By default, handlers run with unlimited concurrency (matching HTTP delivery behavior). Set `max_concurrency` to limit parallel handlers — deliveries that arrive while at capacity are nacked immediately so the server can retry them:
+
+```python
+listener = await client.hooks.listen(on_hook, max_concurrency=10)
+```
+
+### Lifecycle callbacks
+
+```python
+listener = await client.hooks.listen(
+    on_hook,
+    on_connected=lambda info: print(f"Connected: {info.connection_id}"),
+    on_disconnected=lambda err: print(f"Disconnected: {err}"),
+    on_reconnecting=lambda attempt: print(f"Reconnecting (attempt {attempt})"),
+)
+```
+
+### Stream API
+
+For manual control over ack/nack, use `hooks.stream()` which returns an async iterator:
+
+```python
+async with posthook.AsyncPosthook("pk_...") as client:
+    async with await client.hooks.stream() as stream:
+        async for delivery in stream:
+            print(delivery.hook_id, delivery.data)
+
+            if should_process(delivery):
+                await stream.ack(delivery.hook_id)
+            else:
+                await stream.nack(delivery.hook_id, "not ready")
+```
+
+### HTTP fallback
+
+If your project has a domain configured, hooks are delivered via HTTP when no
+WebSocket listener is connected. You can run both an HTTP endpoint and a
+WebSocket listener — the server uses WebSocket when available and falls back to
+HTTP automatically. Since both paths use the same `Result` type, you can share
+your handler logic:
+
+```python
+async def process_hook(delivery):
+    await process_order(delivery.data)
+    return posthook.Result.ack()
+
+# HTTP delivery (ASGI endpoint)
+app = signatures.asgi_handler(process_hook)
+
+# WebSocket delivery (runs alongside)
+listener = await client.hooks.listen(process_hook)
+```
+
+### WebSocket delivery metadata
+
+Deliveries received via WebSocket include a `ws` field with attempt info:
+
+```python
+async def on_hook(delivery):
+    if delivery.ws:
+        print(f"Attempt {delivery.ws.attempt}/{delivery.ws.max_attempts}")
+        if delivery.ws.forward_request:
+            print(f"Original body: {delivery.ws.forward_request.body}")
+    return posthook.Result.ack()
+```
+
+## ASGI/WSGI Handlers
+
+For quick integration without a full web framework, `SignaturesService` provides handler wrappers:
+
+### ASGI
+
+```python
+import posthook
+
+signatures = posthook.create_signatures("ph_sk_...")
+
+async def on_hook(delivery):
+    print(delivery.data)
+    return posthook.Result.ack()
+
+# Mount as an ASGI endpoint (e.g. with uvicorn)
+app = signatures.asgi_handler(on_hook)
+```
+
+### WSGI
+
+```python
+import posthook
+
+signatures = posthook.create_signatures("ph_sk_...")
+
+def on_hook(delivery):
+    print(delivery.data)
+    return posthook.Result.ack()
+
+# Mount as a WSGI endpoint (e.g. with gunicorn)
+app = signatures.wsgi_handler(on_hook)
+```
+
 ## Async Hooks
 
-When [async hooks](https://posthook.io/docs/essentials/async-hooks) are enabled, `parse_delivery()` populates `ack_url` and `nack_url` on the delivery object. Return 202 from your handler and call back when processing completes.
+When [async hooks](https://docs.posthook.io/essentials/async-hooks) are enabled, `parse_delivery()` populates `ack_url` and `nack_url` on the delivery object. Return 202 from your handler and call back when processing completes.
 
 ### FastAPI
 
@@ -551,7 +717,16 @@ client = posthook.Posthook("pk_...", http_client=http_client)
 
 When you provide a custom client, the SDK does **not** close it on `client.close()` -- you are responsible for its lifecycle.
 
+## Resources
+
+- [Documentation](https://docs.posthook.io) — guides, concepts, and patterns
+- [API Reference](https://docs.posthook.io/api-reference/introduction) — endpoint specs and examples
+- [Quickstart](https://docs.posthook.io/quickstart) — get started in under 2 minutes
+- [Pricing](https://posthook.io/pricing) — free tier included
+- [Status](https://status.posthook.io) — uptime and incident history
+
 ## Requirements
 
 - Python 3.9+
 - [httpx](https://www.python-httpx.org/) >= 0.25.0
+- [websockets](https://websockets.readthedocs.io/) >= 12.0 (for WebSocket listener/stream)

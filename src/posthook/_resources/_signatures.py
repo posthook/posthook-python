@@ -6,9 +6,10 @@ import json
 import os
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .._errors import SignatureVerificationError
+from .._listener import Result
 from .._models import Delivery, _parse_dt
 
 DEFAULT_TOLERANCE = 300  # 5 minutes in seconds
@@ -146,6 +147,161 @@ class SignaturesService:
             ack_url=ack_url if has_callbacks else None,
             nack_url=nack_url if has_callbacks else None,
         )
+
+
+    def asgi_handler(
+        self,
+        handler: Callable[[Delivery], Awaitable[Result]],
+    ) -> Callable:
+        """Return an ASGI application that verifies signatures and dispatches to a handler.
+
+        The returned ASGI app reads the request body, verifies the Posthook
+        signature headers, parses the delivery, calls the handler, and returns
+        an appropriate HTTP response.
+
+        Args:
+            handler: Async function that receives a Delivery and returns a Result.
+
+        Returns:
+            An ASGI application callable.
+
+        Example::
+
+            signatures = posthook.create_signatures("ph_sk_...")
+
+            async def on_hook(delivery):
+                print(delivery.data)
+                return posthook.Result.ack()
+
+            app = signatures.asgi_handler(on_hook)
+            # Mount as an ASGI endpoint (e.g. with uvicorn, Starlette, etc.)
+        """
+
+        async def app(scope: dict, receive: Callable, send: Callable) -> None:
+            if scope["type"] != "http":
+                return
+
+            body = b""
+            while True:
+                message = await receive()
+                body += message.get("body", b"")
+                if not message.get("more_body", False):
+                    break
+
+            headers = {
+                k.decode(): v.decode() for k, v in scope.get("headers", [])
+            }
+
+            try:
+                delivery = self.parse_delivery(body, headers)
+            except Exception:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"application/json")],
+                })
+                await send({
+                    "type": "http.response.body",
+                    "body": b'{"error":"signature verification failed"}',
+                })
+                return
+
+            try:
+                result = await handler(delivery)
+            except Exception:
+                result = Result.nack()
+
+            status_map = {"ack": 200, "accept": 202, "nack": 500}
+            status = status_map.get(result.kind, 200)
+
+            if result.kind == "nack":
+                resp_body = b'{"error":"handler failed"}'
+            else:
+                resp_body = b'{"ok":true}'
+
+            resp_headers: list[tuple[bytes, bytes]] = [(b"content-type", b"application/json")]
+            if result.kind == "accept" and result.timeout is not None:
+                resp_headers.append((b"posthook-async-timeout", str(result.timeout).encode()))
+
+            await send({
+                "type": "http.response.start",
+                "status": status,
+                "headers": resp_headers,
+            })
+            await send({
+                "type": "http.response.body",
+                "body": resp_body,
+            })
+
+        return app
+
+    def wsgi_handler(
+        self,
+        handler: Callable[[Delivery], Result],
+    ) -> Callable:
+        """Return a WSGI application that verifies signatures and dispatches to a handler.
+
+        The returned WSGI app reads the request body, verifies the Posthook
+        signature headers, parses the delivery, calls the handler synchronously,
+        and returns an appropriate HTTP response.
+
+        Args:
+            handler: Function that receives a Delivery and returns a Result.
+
+        Returns:
+            A WSGI application callable.
+
+        Example::
+
+            signatures = posthook.create_signatures("ph_sk_...")
+
+            def on_hook(delivery):
+                print(delivery.data)
+                return posthook.Result.ack()
+
+            app = signatures.wsgi_handler(on_hook)
+            # Mount as a WSGI endpoint (e.g. with gunicorn, Flask, etc.)
+        """
+
+        def app(environ: dict, start_response: Callable) -> list[bytes]:
+            content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+            body = environ["wsgi.input"].read(content_length) if content_length else b""
+
+            headers: dict[str, str] = {}
+            for key, value in environ.items():
+                if key.startswith("HTTP_"):
+                    header_name = key[5:].replace("_", "-").title()
+                    headers[header_name] = value
+            if "CONTENT_TYPE" in environ:
+                headers["Content-Type"] = environ["CONTENT_TYPE"]
+
+            try:
+                delivery = self.parse_delivery(body, headers)
+            except Exception:
+                start_response("401 Unauthorized", [("Content-Type", "application/json")])
+                return [b'{"error":"signature verification failed"}']
+
+            try:
+                result = handler(delivery)
+            except Exception:
+                result = Result.nack()
+
+            status_map = {
+                "ack": "200 OK",
+                "accept": "202 Accepted",
+                "nack": "500 Internal Server Error",
+            }
+            status = status_map.get(result.kind, "200 OK")
+            resp_headers: list[tuple[str, str]] = [("Content-Type", "application/json")]
+            if result.kind == "accept" and result.timeout is not None:
+                resp_headers.append(("Posthook-Async-Timeout", str(result.timeout)))
+            start_response(status, resp_headers)
+
+            if result.kind == "nack":
+                return [b'{"error":"handler failed"}']
+            return [b'{"ok":true}']
+
+        return app
 
 
 def create_signatures(signing_key: str | None = None) -> SignaturesService:
